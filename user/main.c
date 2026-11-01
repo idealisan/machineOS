@@ -1,15 +1,17 @@
 /* 用户态测试程序
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * 用途：验证 ring3 程序能调用系统调用、分配内存、填数、再释放。
+ * 用途：
  *   1. 画一个居中的红方块（证明自己真的跑起来了）
- *   2. alloc → 填入一串整数 → 求和校验 → free
- *   3. 循环等键盘，按 B 退出回内核
+ *   2. 正常模式：alloc → 填入整数 → 求和校验 → free
+ *   3. 测试模式 1..3：分别尝试写代码页、读内核内存、执行堆页，
+ *      三种都应该被内核的页权限检查拦下并终止本程序
  *
  * 结果通过 write 系统调用打到串口。
  */
 
 struct boot_info {
+    unsigned int test;      /* 0 = 正常流程，1..3 = 越权访问测试 */
     unsigned int fb;
     unsigned int pitch;
     unsigned int width;
@@ -144,6 +146,39 @@ static void memory_test(void)
         put_str("u:free=FAILED\n");
 }
 
+/* 三种越权访问：每一种都应该被内核捕获，程序被终止 */
+static void permission_tests(struct boot_info *info)
+{
+    switch (info->test) {
+    case 1:
+        put_str("u:test=write to code page\n");
+        *(volatile int *)0x200000 = 123;
+        break;
+
+    case 2: {
+        put_str("u:test=read kernel memory\n");
+        volatile int value = *(volatile int *)0x100000;
+        put_dec((unsigned long)value);
+        put_str("\n");
+        break;
+    }
+
+    case 3: {
+        put_str("u:test=execute heap page\n");
+        long region = sys3(SYS_ALLOC, 4096, 0, 0);
+        put_hex((unsigned long)region);
+        put_str("\n");
+        ((void (*)(void))region)();
+        break;
+    }
+
+    default:
+        return;
+    }
+
+    put_str("u:test=NOT BLOCKED (this is a bug)\n");
+}
+
 __attribute__((section(".text.start"), noreturn))
 void _start(struct boot_info *info)
 {
@@ -155,6 +190,12 @@ void _start(struct boot_info *info)
     fill_rect(info, x, y, size_w, size_h);
 
     put_str("u:start\n");
+
+    if (info->test != 0) {
+        permission_tests(info);
+        sys_exit(0);
+    }
+
     memory_test();
     put_str("u:ready, press B to exit\n");
 

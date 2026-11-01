@@ -12,7 +12,8 @@ BOOT   := $(BUILD)/boot.bin
 PAYLOAD:= $(BUILD)/payload.bin
 USERBIN:= $(BUILD)/user.bin
 
-OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o $(BUILD)/pmm.o $(BUILD)/uheap.o \
+OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o $(BUILD)/pmm.o $(BUILD)/uheap.o $(BUILD)/vmm.o \
+        $(BUILD)/idt.o $(BUILD)/tss.o $(BUILD)/exception.o $(BUILD)/isr.o \
         $(BUILD)/entry.o $(BUILD)/user_image.o
 
 # 段间绝对/相对重定位告警：payload 最终链接到固定地址 0x7E00，
@@ -61,8 +62,23 @@ $(BUILD)/main.o: kernel/main.c kernel/io.h | $(BUILD)
 $(BUILD)/pmm.o: kernel/pmm.c kernel/pmm.h kernel/e820.h kernel/klog.h kernel/io.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BUILD)/uheap.o: kernel/uheap.c kernel/uheap.h kernel/pmm.h kernel/klog.h kernel/io.h | $(BUILD)
+$(BUILD)/uheap.o: kernel/uheap.c kernel/uheap.h kernel/vmm.h kernel/pmm.h kernel/klog.h kernel/io.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/vmm.o: kernel/vmm.c kernel/vmm.h kernel/pmm.h kernel/klog.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/idt.o: kernel/idt.c kernel/idt.h kernel/klog.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/tss.o: kernel/tss.c kernel/tss.h kernel/klog.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/exception.o: kernel/exception.c kernel/exception.h kernel/klog.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/isr.o: kernel/isr.asm | $(BUILD)
+	$(ASM) $(ASMFLAGS) -f elf64 -o $@ $<
 
 $(BUILD)/syscall.o: kernel/syscall.c kernel/io.h kernel/uheap.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<

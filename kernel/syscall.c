@@ -9,6 +9,7 @@
 
 #include "io.h"
 #include "uheap.h"
+#include "vmm.h"
 
 extern void sys_exit_to_kernel(void);
 
@@ -48,9 +49,10 @@ void kbd_flush(void)
         (void)inb(0x60);
 }
 
+/* 逐个页查页表：必须存在且允许用户访问，否则内核不能碰这块内存 */
 static int user_range_ok(unsigned long ptr, unsigned long len)
 {
-    return ptr >= USER_BASE && ptr + len >= ptr && ptr + len <= USER_TOP;
+    return vmm_user_ok(ptr, len);
 }
 
 extern char syscall_entry[];

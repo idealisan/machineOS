@@ -12,6 +12,9 @@
 #include "io.h"
 #include "pmm.h"
 #include "uheap.h"
+#include "vmm.h"
+#include "tss.h"
+#include "idt.h"
 
 extern unsigned char vbe_ok;
 extern unsigned char vbe_mode_block[256];
@@ -43,6 +46,7 @@ extern void kbd_flush(void);
 #define USER_STACK 0x3ff000ul   /* 栈向下生长，不会踩到上面的 boot_info */
 
 struct boot_info {
+    unsigned int test;      /* 0 = 正常流程，1..3 = 越权访问测试 */
     unsigned int fb;
     unsigned int pitch;
     unsigned int width;
@@ -101,12 +105,14 @@ static void copy_user_image(void)
         dst[i] = user_image_start[i];
 }
 
-static void launch_user(void)
+static void launch_user(int test)
 {
     struct boot_info *info = (struct boot_info *)USER_INFO;
 
     copy_user_image();
+    vmm_protect_user_code();
 
+    info->test = (unsigned int)test;
     info->fb = load32(vbe_mode_block + VBE_PHYS_BASE);
     info->pitch = pitch();
     info->width = width();
@@ -119,6 +125,9 @@ static void launch_user(void)
     serial_putc(']'); serial_putc(10);
 
     enter_user((void (*)(void *))USER_ENTRY, USER_STACK, info);
+
+    /* 不论正常退出还是被异常终止，都收回这个程序的堆页 */
+    uheap_reset();
 
     serial_putc('['); serial_putc('b'); serial_putc('a'); serial_putc('c'); serial_putc('k');
     serial_putc(']'); serial_putc(10);
@@ -134,7 +143,10 @@ void kernel_main(void)
 
     pmm_init();
     pmm_selftest();
+    vmm_init();
     uheap_init();
+    tss_init();
+    idt_init();
 
     if (!vbe_ok) {
         serial_putc('n'); serial_putc('o'); serial_putc(' '); serial_putc('v'); serial_putc('b');
@@ -156,8 +168,15 @@ void kernel_main(void)
             __asm__ volatile("pause");
             continue;
         }
-        if (key == 0x1e) {   /* A 键按下 */
-            launch_user();
+        /* A = 正常运行；1/2/3 = 三种越权访问测试 */
+        int test = -1;
+        if (key == 0x1e) test = 0;
+        else if (key == 0x02) test = 1;
+        else if (key == 0x03) test = 2;
+        else if (key == 0x04) test = 3;
+
+        if (test >= 0) {
+            launch_user(test);
             fill_screen(purple);   /* 用户程序退出后清掉它画的红方块 */
             kbd_flush();
         }

@@ -282,6 +282,8 @@ pm_entry:
     or dword [pdpt + 3 * 8], 0x04
     or dword [pd + (0x200000 >> 21) * 8], 0x04
     or dword [pd + (0xfd000000 >> 21) * 8], 0x04
+    ; 帧缓冲只用来写像素，禁止执行
+    or dword [pd + (0xfd000000 >> 21) * 8 + 4], 0x80000000
 
     ; ---- 8. 打开 PAE、LME，再开分页进入长模式 ----
     mov eax, cr4
@@ -293,7 +295,7 @@ pm_entry:
 
     mov ecx, 0xc0000080          ; IA32_EFER
     rdmsr
-    or eax, 1 << 8               ; EFER.LME
+    or eax, (1 << 8) | (1 << 11) ; EFER.LME + EFER.NXE（允许页表里的 NX 位）
     wrmsr
 
     mov eax, cr0
@@ -336,6 +338,7 @@ long_entry:
 section .data
 
 align 4
+global gdt
 gdt:
     dq 0x0000000000000000        ; 0x00 空描述符
     dq 0x00cf9a000000ffff        ; 0x08 32 位代码
@@ -344,6 +347,8 @@ gdt:
     dq 0x00af92000000ffff        ; 0x20 64 位数据
     dq 0x00cff2000000ffff        ; 0x28 用户数据：DPL=3，可写，4G
     dq 0x00affa000000ffff        ; 0x30 用户代码：DPL=3，64 位
+    ; 0x38：64 位 TSS 描述符（16 字节），由内核启动时填写
+    times 16 db 0
 gdt_end:
 gdt_desc:
     dw gdt_end - gdt - 1
