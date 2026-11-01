@@ -227,6 +227,16 @@ pm_entry:
     dec ecx
     jnz .fill_pd
 
+    ; ---- 用户可访问页 ----
+    ; 分页的 U/S 位在每一级都必须置位，否则用户态连走页表都会 #PF。
+    ; 这里放开的是"路径"：PML4[0]、PDPT[0]、PDPT[3]；
+    ; 真正的隔离仍然靠 PDE：只有 2 MiB..4 MiB 和 0xFD000000 那两个页是 User。
+    or dword [pml4 + 0 * 8], 0x04
+    or dword [pdpt + 0 * 8], 0x04
+    or dword [pdpt + 3 * 8], 0x04
+    or dword [pd + (0x200000 >> 21) * 8], 0x04
+    or dword [pd + (0xfd000000 >> 21) * 8], 0x04
+
     ; ---- 8. 打开 PAE、LME，再开分页进入长模式 ----
     mov eax, cr4
     or eax, 1 << 5               ; CR4.PAE
@@ -286,6 +296,8 @@ gdt:
     dq 0x00cf92000000ffff        ; 0x10 32 位数据
     dq 0x00af9a000000ffff        ; 0x18 64 位代码
     dq 0x00af92000000ffff        ; 0x20 64 位数据
+    dq 0x00cff2000000ffff        ; 0x28 用户数据：DPL=3，可写，4G
+    dq 0x00affa000000ffff        ; 0x30 用户代码：DPL=3，64 位
 gdt_end:
 gdt_desc:
     dw gdt_end - gdt - 1

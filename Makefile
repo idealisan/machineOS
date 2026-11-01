@@ -10,10 +10,11 @@ BUILD  := build
 IMG    := $(BUILD)/machine-os.img
 BOOT   := $(BUILD)/boot.bin
 PAYLOAD:= $(BUILD)/payload.bin
+USERBIN:= $(BUILD)/user.bin
 
-OBJS   := $(BUILD)/stage2.o $(BUILD)/main.o
+OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o \
+        $(BUILD)/entry.o $(BUILD)/user_image.o
 
-# -w-reloc-abs-word：flat binary 下绝对地址在汇编期解析，不涉及可重定位截断。
 # 段间绝对/相对重定位告警：payload 最终链接到固定地址 0x7E00，
 # 这些重定位在链接期必然可解析，非 -f bin 场景下无实际风险。
 ASMFLAGS := -Wall -w-reloc-abs-word -w-reloc-abs-dword -w-reloc-abs-qword -w-reloc-rel-dword
@@ -25,6 +26,8 @@ CFLAGS := -target x86_64-elf -std=c17 -O2 -Wall -Wextra \
           -fno-asynchronous-unwind-tables \
           -mno-red-zone -mno-sse -mno-mmx -mno-80387
 
+USER_CFLAGS := $(CFLAGS)
+
 LDFLAGS := -T kernel/kernel.ld --image-base=0 --oformat=binary -nostdlib
 
 .PHONY: all run clean
@@ -34,10 +37,28 @@ all: $(IMG)
 $(BUILD):
 	mkdir -p $(BUILD)
 
+# ---- 用户态程序：独立编译、独立链接到 0x200000 ----
+$(BUILD)/user.o: user/main.c | $(BUILD)
+	$(CC) $(USER_CFLAGS) -c -o $@ $<
+
+$(USERBIN): $(BUILD)/user.o user/user.ld
+	$(LD) -T user/user.ld --image-base=0 --oformat=binary -nostdlib -o $@ $<
+
+# 用户镜像以 incbin 方式嵌进内核只读段
+$(BUILD)/user_image.o: kernel/user_image.asm $(USERBIN) | $(BUILD)
+	$(ASM) -f elf64 -o $@ $<
+
+# ---- 内核 ----
 $(BUILD)/stage2.o: boot/stage2.asm | $(BUILD)
 	$(ASM) $(ASMFLAGS) -f elf64 -o $@ $<
 
-$(BUILD)/main.o: kernel/main.c | $(BUILD)
+$(BUILD)/entry.o: kernel/entry.asm | $(BUILD)
+	$(ASM) $(ASMFLAGS) -f elf64 -o $@ $<
+
+$(BUILD)/main.o: kernel/main.c kernel/io.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/syscall.o: kernel/syscall.c kernel/io.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # 链接后直接输出扁平的 payload（基址 0x7E00，不含引导扇区）

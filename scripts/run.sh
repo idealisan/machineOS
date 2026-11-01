@@ -33,6 +33,7 @@ make
 sleep 1
 
 echo "启动 QEMU（镜像：${IMG}）"
+echo "窗口内按 A 启动用户程序，按 B 退出"
 # -boot order=c     强制从磁盘引导，跳过网络/光驱引导尝试
 # -no-reboot        出错时不自动重启，避免不断循环，便于观察最后一屏
 exec qemu-system-x86_64 \
