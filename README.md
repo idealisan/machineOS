@@ -56,6 +56,7 @@ Machine OS 不基于任何现有操作系统进行改进，不继承 Linux、BSD
 ├── README.md      # 项目说明
 ├── LICENSE        # AGPL-3.0
 ├── boot/          # 引导扇区（16 位实模式，NASM）
+├── scripts/       # 开发辅助脚本（启动、测试）
 ├── docs/          # 设计与调研文档（编号递增）
 ├── build/         # 构建产物（不入库）
 └── .tmp/          # 本地临时目录（不入库）
@@ -66,9 +67,20 @@ Machine OS 不基于任何现有操作系统进行改进，不继承 Linux、BSD
 依赖：NASM、QEMU（见 `docs/0001-development-environment-report.md`）。
 
 ```
-make        # 生成 build/machine-os.img（当前为 512 字节引导扇区）
-make run    # 在 QEMU 中启动
+./scripts/run.sh    # 推荐：修正权限后一条命令完成构建 + 启动 + 弹出虚拟屏幕
+make                # 仅构建 build/machine-os.img（当前为 512 字节引导扇区）
+make run            # 构建并启动，但依赖 QEMU 默认显示设置
 ```
+
+`scripts/run.sh` 会检查依赖、做增量构建，然后用 QEMU 打开窗口显示虚拟屏幕，
+便于开发者和测试人员直接观察引导效果。额外参数会原样传给 QEMU，例如：
+
+```
+./scripts/run.sh -display none      # 无窗口运行
+./scripts/run.sh -s -S              # 等待调试器连接
+```
+
+窗口内快捷键：`Ctrl+Alt+2` 进入 QEMU 监视器，`Ctrl+Alt+1` 返回，关闭窗口即退出。
 
 当前镜像只含引导扇区：BIOS 加载后屏幕显示两行启动标识，随后 `hlt` 停机。
 
