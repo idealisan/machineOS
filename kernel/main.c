@@ -10,6 +10,7 @@
  */
 
 #include "io.h"
+#include "pmm.h"
 
 extern unsigned char vbe_ok;
 extern unsigned char vbe_mode_block[256];
@@ -129,6 +130,9 @@ void kernel_main(void)
     /* 全部屏蔽：当前不处理任何硬件中断，键盘交给轮询 */
     outb(0x21, 0xff);
     outb(0xa1, 0xff);
+
+    pmm_init();
+    pmm_selftest();
 
     if (!vbe_ok) {
         serial_putc('n'); serial_putc('o'); serial_putc(' '); serial_putc('v'); serial_putc('b');

@@ -45,7 +45,10 @@ stage2_entry:
     call a20_check
     jc .fail_a20
 
-    ; ---- 2. 设置 VBE 图形模式（只是尝试，失败则内核退回文本模式）----
+    ; ---- 2. 采集 E820 内存地图，交给内核的物理内存管理器 ----
+    call e820_probe
+
+    ; ---- 3. 设置 VBE 图形模式（只是尝试，失败则内核退回文本模式）----
     call vbe_setup
 
     ; ---- 3. 加载 GDT ----
@@ -64,6 +67,49 @@ stage2_entry:
 .hang:
     hlt
     jmp .hang
+
+; ---------------------------------------------------------------- E820
+; 逐条读取 BIOS 内存地图，复制到 e820_entries，条数写入 e820_count。
+; 单条记录 24 字节：base(8) + length(8) + type(4) + attr(4)。
+e820_probe:
+    xor ax, ax
+    mov es, ax
+    mov dword [e820_count], 0
+    mov dword [e820_tries], 0
+    xor ebx, ebx
+.next:
+    mov eax, 0xe820
+    mov edx, 0x534d4150          ; 'SMAP'
+    mov ecx, 24
+    mov di, e820_tmp
+    mov dword [e820_tmp + 20], 1
+    int 0x15
+    jc .done
+    cmp eax, 0x534d4150
+    jne .done
+
+    cmp dword [e820_tmp + 16], 0 ; type = 0 的记录没有意义
+    je .skip
+
+    mov eax, [e820_count]
+    cmp eax, 32
+    jae .done
+    imul eax, eax, 24
+    mov di, e820_entries
+    add di, ax
+    mov si, e820_tmp
+    mov cx, 12                   ; 12 个 word = 24 字节
+    rep movsw
+    inc dword [e820_count]
+
+.skip:
+    test ebx, ebx
+    jz .done
+    inc dword [e820_tries]
+    cmp dword [e820_tries], 64   ; 保险：避免 BIOS 不给结束标记
+    jb .next
+.done:
+    ret
 
 ; ---------------------------------------------------------------- VBE
 ; 扫描 VBE 模式表，找到 1024x768x24 直接色且支持线性帧缓冲的模式。
@@ -309,6 +355,14 @@ align 16
 vbe_mode_block: times 256 db 0   ; 命中的模式信息块，C 内核按 VBE 规范偏移读取
 vbe_ok:        db 0              ; 1 = 已切换到目标图形模式
 vbe_cursor:    dw 0
+
+align 8
+global e820_count
+global e820_entries
+e820_count:    dd 0
+e820_tries:    dd 0
+e820_tmp:      times 24 db 0
+e820_entries:  times 768 db 0    ; 最多 32 条记录
 
 section .bss
 align 16

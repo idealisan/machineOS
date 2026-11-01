@@ -12,7 +12,7 @@ BOOT   := $(BUILD)/boot.bin
 PAYLOAD:= $(BUILD)/payload.bin
 USERBIN:= $(BUILD)/user.bin
 
-OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o \
+OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o $(BUILD)/pmm.o \
         $(BUILD)/entry.o $(BUILD)/user_image.o
 
 # 段间绝对/相对重定位告警：payload 最终链接到固定地址 0x7E00，
@@ -56,6 +56,9 @@ $(BUILD)/entry.o: kernel/entry.asm | $(BUILD)
 	$(ASM) $(ASMFLAGS) -f elf64 -o $@ $<
 
 $(BUILD)/main.o: kernel/main.c kernel/io.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/pmm.o: kernel/pmm.c kernel/pmm.h kernel/e820.h kernel/klog.h kernel/io.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/syscall.o: kernel/syscall.c kernel/io.h | $(BUILD)

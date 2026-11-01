@@ -35,6 +35,10 @@ SECTIONS
     }
     . = ALIGN(16);
     __bss_end = .;
+    kernel_end = .;
+
+    /* 用户程序固定在 0x200000，内核镜像绝不能长到那里去 */
+    ASSERT(kernel_end <= 0x200000, "kernel image overlaps user page at 0x200000")
 
     /DISCARD/ :
     {
