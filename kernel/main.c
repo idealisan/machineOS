@@ -3,88 +3,90 @@
  *
  * 约定：System V AMD64 ABI（与 Linux 上 C 编译器一致），
  * 但系统调用接口将来由本内核自行定义。
+ *
+ * 当前目标：在 VBE 1024x768x24 直接色模式下渲染纯色背景。
  */
 
-#define VGA_WIDTH  80
-#define VGA_HEIGHT 25
-#define VGA_ATTR   0x0f              /* 黑底白字 */
+extern unsigned char vbe_ok;
+extern unsigned char vbe_mode_block[256];
 
-static volatile unsigned short *const vga = (volatile unsigned short *)0xb8000;
-static unsigned row;
-static unsigned col;
+/* VBE 模式信息块字段偏移（VESA BIOS Extension 3.0 规范） */
+#define VBE_BYTES_PER_SCANLINE 0x10
+#define VBE_XRES               0x12
+#define VBE_YRES               0x14
+#define VBE_BPP                0x19
+#define VBE_RED_POS            0x20
+#define VBE_GREEN_POS          0x22
+#define VBE_BLUE_POS           0x24
+#define VBE_PHYS_BASE          0x28
 
-static void clear_screen(void)
-{
-    for (unsigned i = 0; i < VGA_WIDTH * VGA_HEIGHT; ++i)
-        vga[i] = (unsigned short)((VGA_ATTR << 8) | ' ');
-    row = 0;
-    col = 0;
-}
+/* 背景色：深紫 #300050 */
+#define BG_R 0x30
+#define BG_G 0x00
+#define BG_B 0x50
 
-static void scroll(void)
-{
-    for (unsigned i = 0; i < (VGA_HEIGHT - 1) * VGA_WIDTH; ++i)
-        vga[i] = vga[i + VGA_WIDTH];
-    for (unsigned i = (VGA_HEIGHT - 1) * VGA_WIDTH; i < VGA_HEIGHT * VGA_WIDTH; ++i)
-        vga[i] = (unsigned short)((VGA_ATTR << 8) | ' ');
-    row = VGA_HEIGHT - 1;
-}
+#define TEXT_BUFFER ((unsigned char *)0xb8000)
 
-static void put_char(char c)
-{
-    if (c == '\n') {
-        col = 0;
-        if (++row == VGA_HEIGHT)
-            scroll();
-        return;
-    }
-    vga[row * VGA_WIDTH + col] = (unsigned short)((VGA_ATTR << 8) | (unsigned char)c);
-    if (++col == VGA_WIDTH) {
-        col = 0;
-        if (++row == VGA_HEIGHT)
-            scroll();
-    }
-}
-
+/* 仅在 VBE 失败、仍停留在文本模式时使用 */
 static void put_string(const char *s)
 {
-    while (*s)
-        put_char(*s++);
+    static unsigned int cell;
+
+    for (; *s; ++s) {
+        if (*s == '\n')
+            cell = (cell / 80 + 1) * 80;
+        else {
+            TEXT_BUFFER[cell * 2] = (unsigned char)*s;
+            TEXT_BUFFER[cell * 2 + 1] = 0x0f;
+            ++cell;
+        }
+    }
 }
 
-static void put_hex(unsigned long value)
+static unsigned int load16(const unsigned char *p)
 {
-    static const char digits[] = "0123456789abcdef";
-    put_string("0x");
-    for (int shift = 60; shift >= 0; shift -= 4)
-        put_char(digits[(value >> shift) & 0xf]);
+    return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
 }
 
-/* 供后续验证长模式与页表状态：读 CR0 / CR3 / CR4 */
-static unsigned long read_cr0(void) { unsigned long v; __asm__ volatile("mov %%cr0, %0" : "=r"(v)); return v; }
-static unsigned long read_cr3(void) { unsigned long v; __asm__ volatile("mov %%cr3, %0" : "=r"(v)); return v; }
-static unsigned long read_cr4(void) { unsigned long v; __asm__ volatile("mov %%cr4, %0" : "=r"(v)); return v; }
+static unsigned int load32(const unsigned char *p)
+{
+    return load16(p) | (load16(p + 2) << 16);
+}
 
 void kernel_main(void)
 {
-    clear_screen();
+    if (!vbe_ok) {
+        put_string("Machine OS: VBE 1024x768x24 unavailable, staying in text mode\n");
+        for (;;)
+            __asm__ volatile("hlt");
+    }
 
-    put_string("Machine OS\n");
-    put_string("stage 3: kernel_main() running in 64-bit long mode\n");
-    put_string("ABI: System V AMD64 (C calling convention)\n\n");
+    const unsigned char *raw = vbe_mode_block;
 
-    put_string("cr0 = ");
-    put_hex(read_cr0());
-    put_string("  (PG|PE set => paging + protected mode)\n");
-    put_string("cr3 = ");
-    put_hex(read_cr3());
-    put_string("  (PML4 physical address)\n");
-    put_string("cr4 = ");
-    put_hex(read_cr4());
-    put_string("  (PAE set)\n\n");
+    unsigned int width  = load16(raw + VBE_XRES);
+    unsigned int height = load16(raw + VBE_YRES);
+    unsigned int pitch  = load16(raw + VBE_BYTES_PER_SCANLINE);
 
-    put_string("stack, bss and page tables are ready.\n");
-    put_string("nothing to schedule yet - CPU halted.\n");
+    unsigned char rpos = raw[VBE_RED_POS];
+    unsigned char gpos = raw[VBE_GREEN_POS];
+    unsigned char bpos = raw[VBE_BLUE_POS];
+
+    unsigned char *fb = (unsigned char *)(unsigned long)load32(raw + VBE_PHYS_BASE);
+
+    unsigned int pixel = ((unsigned int)BG_R << rpos) |
+                         ((unsigned int)BG_G << gpos) |
+                         ((unsigned int)BG_B << bpos);
+
+    /* 24bpp：每像素 3 字节；扫描行之间可能有填充，所以按 pitch 而不是 width*3 跳行 */
+    for (unsigned int y = 0; y < height; ++y) {
+        unsigned char *row = fb + (unsigned long)y * pitch;
+        for (unsigned int x = 0; x < width; ++x) {
+            unsigned char *px = row + (unsigned long)x * 3;
+            px[0] = (unsigned char)pixel;
+            px[1] = (unsigned char)(pixel >> 8);
+            px[2] = (unsigned char)(pixel >> 16);
+        }
+    }
 
     for (;;)
         __asm__ volatile("hlt");
