@@ -12,7 +12,7 @@ BOOT   := $(BUILD)/boot.bin
 PAYLOAD:= $(BUILD)/payload.bin
 USERBIN:= $(BUILD)/user.bin
 
-OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o $(BUILD)/pmm.o \
+OBJS := $(BUILD)/stage2.o $(BUILD)/main.o $(BUILD)/syscall.o $(BUILD)/pmm.o $(BUILD)/uheap.o \
         $(BUILD)/entry.o $(BUILD)/user_image.o
 
 # 段间绝对/相对重定位告警：payload 最终链接到固定地址 0x7E00，
@@ -61,7 +61,10 @@ $(BUILD)/main.o: kernel/main.c kernel/io.h | $(BUILD)
 $(BUILD)/pmm.o: kernel/pmm.c kernel/pmm.h kernel/e820.h kernel/klog.h kernel/io.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BUILD)/syscall.o: kernel/syscall.c kernel/io.h | $(BUILD)
+$(BUILD)/uheap.o: kernel/uheap.c kernel/uheap.h kernel/pmm.h kernel/klog.h kernel/io.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/syscall.o: kernel/syscall.c kernel/io.h kernel/uheap.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # 链接后直接输出扁平的 payload（基址 0x7E00，不含引导扇区）

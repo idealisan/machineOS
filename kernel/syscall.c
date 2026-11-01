@@ -8,6 +8,7 @@
  */
 
 #include "io.h"
+#include "uheap.h"
 
 extern void sys_exit_to_kernel(void);
 
@@ -88,6 +89,12 @@ long syscall_dispatch(long number, long a1, long a2, long a3)
 
     case 2:
         return kbd_poll();
+
+    case 3:
+        return uheap_alloc((unsigned long)a1);
+
+    case 4:
+        return uheap_free((unsigned long)a1);
 
     default:
         return -1;

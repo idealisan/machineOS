@@ -11,6 +11,7 @@
 
 #include "io.h"
 #include "pmm.h"
+#include "uheap.h"
 
 extern unsigned char vbe_ok;
 extern unsigned char vbe_mode_block[256];
@@ -133,6 +134,7 @@ void kernel_main(void)
 
     pmm_init();
     pmm_selftest();
+    uheap_init();
 
     if (!vbe_ok) {
         serial_putc('n'); serial_putc('o'); serial_putc(' '); serial_putc('v'); serial_putc('b');

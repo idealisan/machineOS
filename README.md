@@ -152,9 +152,12 @@ pmm: reject unaligned=ok double-free=ok
 | 参数 | `rdi, rsi, rdx`（最多三个） |
 | 返回 | `rax`，出错返回负值 |
 | 内核保证不改的寄存器 | 除 `rax`、`rcx`、`r11` 外的全部通用寄存器 |
-| 编号分配 | `0 exit(status)`、`1 write(fd, buf, len)`、`2 read_key()` |
+| 编号分配 | `0 exit(status)`、`1 write(fd, buf, len)`、`2 read_key()`、`3 alloc(size)`、`4 free(addr)` |
 
-`write` 目前只写串口（`-serial`），`read_key` 返回 PS/2 扫描码、无按键返回 -1。
+`write` 目前只写串口（`-serial`），`read_key` 返回 PS/2 扫描码、无按键返回 -1，
+`alloc/free` 管理用户堆：`alloc` 按 4 KiB 取整、从 pmm 拿物理帧并挂到用户页表，
+`free` 拆掉映射并把帧还给 pmm。分配失败（物理内存不足或超过窗口）返回 -1，
+不会超额分配。
 `STAR` 让 `sysret` 回到 `CS=0x33 / SS=0x2B`；进入内核时 `FMASK` 会清掉
 `IF/TF/DF/NT/AC/IOPL`。
 
@@ -162,6 +165,8 @@ pmm: reject unaligned=ok double-free=ok
 
 - 用户程序固定加载在 **0x200000**，栈顶 **0x3FF000**，都落在 stage 2 标记为
   User 可访问的那一个 2 MiB 页里；暂时没有 ELF 装载器。
+- 用户堆窗口 **0x300000..0x3F0000**：首次分配时把该 2 MiB 大页拆成 4 KiB 页表
+  （原有内容保持恒等映射），之后每页由 pmm 提供独立的物理帧。分配表固定 32 项。
 - 帧缓冲所在的 2 MiB 页也对用户开放，所以程序可以直接画像素。
   这是为了先跑通系统调用链路，后续会把绘制改成系统调用。
 - 没有 IDT：用户态一旦触发异常，会直接三重故障重启。
@@ -191,6 +196,20 @@ make run            # 构建并启动
 
 启动后在窗口里按 **A** 启动用户程序，按 **B** 退出；无窗口模式下可以用
 QEMU 监视器发按键：`sendkey a` / `sendkey b`。
+
+用户程序启动后会做三件事：画红方块、做一次内存测试（分配 8 KiB、填入 2048 个整数、
+求和校验、释放）、然后等键盘。串口输出形如：
+
+```
+u:start
+uheap: alloc 0x0000000000300000 pages=2 pmm_free=64834
+u:alloc=0x0000000000300000
+u:filled=2048 entries, first=0 last=2047 sum=2096128
+u:verify=ok
+uheap: free 0x0000000000300000 pmm_free=64836
+u:free=ok
+u:ready, press B to exit
+```
 
 镜像 = 512 字节引导扇区 + payload（扇区数由构建时自动计算并写进引导扇区）。
 
