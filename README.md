@@ -45,7 +45,7 @@ Machine OS 不基于任何现有操作系统进行改进，不继承 Linux、BSD
 7. 文字控制台 shell 与基础工具集
 8. 图形界面与更丰富的设备驱动
 
-当前状态：阶段 1 完成——引导扇区能由 BIOS 加载、建立段与栈、输出启动标识并停机。
+当前状态：阶段 2 完成——已进入 64 位长模式，C 语言入口 `kernel_main()` 正常执行。
 
 ## 仓库结构
 
@@ -55,21 +55,44 @@ Machine OS 不基于任何现有操作系统进行改进，不继承 Linux、BSD
 ├── Makefile       # 构建入口
 ├── README.md      # 项目说明
 ├── LICENSE        # AGPL-3.0
-├── boot/          # 引导扇区（16 位实模式，NASM）
+├── boot/          # boot.asm（引导扇区）与 stage2.asm（模式切换）
+├── kernel/        # C 内核与链接脚本
 ├── scripts/       # 开发辅助脚本（启动、测试）
 ├── docs/          # 设计与调研文档（编号递增）
 ├── build/         # 构建产物（不入库）
 └── .tmp/          # 本地临时目录（不入库）
 ```
 
-## 构建与运行
-
-依赖：NASM、QEMU（见 `docs/0001-development-environment-report.md`）。
+## 启动流程
 
 ```
-./scripts/run.sh    # 推荐：修正权限后一条命令完成构建 + 启动 + 弹出虚拟屏幕
-make                # 仅构建 build/machine-os.img（当前为 512 字节引导扇区）
-make run            # 构建并启动，但依赖 QEMU 默认显示设置
+BIOS ──► stage 1（引导扇区，16 位）
+           ├─ 设置段寄存器与栈
+           └─ int 13h AH=42h 逐扇区读取 payload 到 0x7E00，跳转过去
+             │
+         stage 2（16 位 → 64 位，基址 0x7E00）
+           ├─ 打开 A20，并做回绕校验
+           ├─ 加载 GDT（32 位代码/数据 + 64 位代码/数据）
+           ├─ 进入 32 位保护模式
+           ├─ 清零 BSS
+           ├─ 建立页表：PML4 → PDPT → 512 个 2M 页，恒等映射前 1 GiB
+           ├─ 置 PAE、EFER.LME，开分页进入长模式
+           ├─ 设置栈（16 KiB，16 字节对齐，满足 System V AMD64 ABI）
+           └─ call kernel_main()
+```
+
+中断在进入保护模式时即关闭（`cli`），在建立 IDT 之前不会再打开，
+避免空 IDT 收到时钟中断直接触发三重故障。
+
+## 构建与运行
+
+依赖：NASM、clang（需支持 `-target x86_64-elf`）、ld.lld、QEMU。
+见 `docs/0001-development-environment-report.md`；`ld.lld` 可用 `brew install lld` 安装。
+
+```
+./scripts/run.sh    # 推荐：一条命令完成构建 + 启动 + 弹出虚拟屏幕
+make                # 仅构建 build/machine-os.img
+make run            # 构建并启动
 ```
 
 `scripts/run.sh` 会检查依赖、做增量构建，然后用 QEMU 打开窗口显示虚拟屏幕，
@@ -82,19 +105,23 @@ make run            # 构建并启动，但依赖 QEMU 默认显示设置
 
 窗口内快捷键：`Ctrl+Alt+2` 进入 QEMU 监视器，`Ctrl+Alt+1` 返回，关闭窗口即退出。
 
-当前镜像只含引导扇区：BIOS 加载后屏幕显示两行启动标识，随后 `hlt` 停机。
+当前镜像 18 个扇区（512 字节引导扇区 + 17 个扇区的 payload）。启动后依次显示引导信息，
+最后停在 C 内核的 `hlt` 循环，屏幕上给出 CR0/CR3/CR4 的实测值作为长模式自检。
 
-## 待决策：编译器与 ABI
+## 编译器与 ABI
 
-Machine OS 不沿用 Linux 的二进制接口，因此 C 语言层面的 ABI 需要自行定义：
+当前阶段的选择：
 
-- 系统调用约定（哪些寄存器传参、如何编号）由本内核规定，与 Linux 无关；
-- 用户态与内核态的调用约定需要和编译器配合，理想情况是一套自有 GCC/Clang
-  后端描述文件（spec/target description），而非迁就现有目标平台；
-- 因此在引入 C 语言之前，先完成启动路径与最小运行时，再评估"直接使用
-  `x86_64-elf` 目标 + 自定义调用约定"是否足够，或是否需要自建工具链。
+- **编译器**：clang，目标三元组 `x86_64-elf`，freestanding（无 libc、无运行时），
+  关闭 red zone、SSE 与 x87，避免在内核尚未初始化 FPU 时踩到意外状态。
+- **C 调用约定**：暂时采用 **System V AMD64 ABI**，与 Linux 上的 C 编译器一致，
+  这样现有 C 代码与编译器后端可以直接使用。
+- **系统调用接口**：不沿用 Linux，将来由本内核自行定义（寄存器约定、调用号、
+  返回语义），属于独立设计，不随用户态 C ABI 变化。
 
-该问题在阶段 1 之后再讨论，当前所有代码均为汇编。
+长期看，如果自定义的调用约定或对象格式无法用现有目标三元组表达，再考虑自建
+工具链（自有 Clang target description / 自定义链接器）；现阶段不为尚未确定的
+需求提前付出成本。
 
 ## 许可证
 
